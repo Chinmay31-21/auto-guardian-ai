@@ -1,8 +1,13 @@
 import { useState } from 'react';
-import { maintenanceAlerts, vehicles } from '@/data/mockData';
+import { useRealtimeAlerts } from '@/hooks/useRealtimeAlerts';
+import { useRealtimeVehicles } from '@/hooks/useRealtimeVehicles';
+import { ScheduleServiceModal } from './ScheduleServiceModal';
+import { CustomerContactModal } from './CustomerContactModal';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useToast } from '@/hooks/use-toast';
 import {
   AlertTriangle,
   AlertCircle,
@@ -12,11 +17,16 @@ import {
   DollarSign,
   TrendingUp,
   Phone,
-  Check
+  Check,
+  Sparkles
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { Tables } from '@/integrations/supabase/types';
 
-const severityConfig = {
+type MaintenanceAlert = Tables<'maintenance_alerts'>;
+type Vehicle = Tables<'vehicles'>;
+
+const severityConfig: Record<string, { icon: any; color: string; badge: string; border: string }> = {
   low: {
     icon: Info,
     color: 'bg-[hsl(var(--chart-1))]/10 text-[hsl(var(--chart-1))]',
@@ -43,23 +53,81 @@ const severityConfig = {
   }
 };
 
-const statusConfig = {
-  pending: 'bg-muted text-muted-foreground',
-  scheduled: 'bg-[hsl(var(--chart-1))]/20 text-[hsl(var(--chart-1))]',
-  completed: 'bg-[hsl(var(--success))]/20 text-[hsl(var(--success))]',
-  dismissed: 'bg-muted text-muted-foreground line-through'
-};
-
 export function AlertsList() {
+  const { toast } = useToast();
+  const { alerts, isLoading, updateAlert } = useRealtimeAlerts();
+  const { vehicles } = useRealtimeVehicles();
   const [filter, setFilter] = useState<'all' | 'pending' | 'scheduled'>('all');
+  const [selectedAlert, setSelectedAlert] = useState<MaintenanceAlert | null>(null);
+  const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
+  const [isScheduleOpen, setIsScheduleOpen] = useState(false);
+  const [isContactOpen, setIsContactOpen] = useState(false);
 
-  const filteredAlerts = maintenanceAlerts.filter((alert) => {
+  const filteredAlerts = alerts.filter((alert) => {
     if (filter === 'all') return true;
-    return alert.status === filter;
+    if (filter === 'pending') return !alert.is_resolved;
+    if (filter === 'scheduled') return alert.is_resolved === false;
+    return true;
   });
+
+  const handleScheduleService = (alert: MaintenanceAlert) => {
+    const vehicle = vehicles.find(v => v.id === alert.vehicle_id);
+    setSelectedAlert(alert);
+    setSelectedVehicle(vehicle || null);
+    setIsScheduleOpen(true);
+  };
+
+  const handleContactCustomer = (alert: MaintenanceAlert) => {
+    const vehicle = vehicles.find(v => v.id === alert.vehicle_id);
+    setSelectedVehicle(vehicle || null);
+    setIsContactOpen(true);
+  };
+
+  const handleDismiss = async (alert: MaintenanceAlert) => {
+    try {
+      await updateAlert(alert.id, { is_resolved: true, resolved_at: new Date().toISOString() });
+      toast({
+        title: "Alert Dismissed",
+        description: "The maintenance alert has been dismissed.",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to dismiss alert.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <div className="flex gap-2">
+          {[1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-9 w-24" />
+          ))}
+        </div>
+        {[1, 2, 3].map((i) => (
+          <Skeleton key={i} className="h-48" />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
+      {/* Header with real-time indicator */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="h-2 w-2 rounded-full bg-[hsl(var(--success))] animate-pulse" />
+          <span className="text-sm text-muted-foreground">Real-time alerts active</span>
+        </div>
+        <Badge variant="outline" className="gap-1">
+          <Sparkles className="h-3 w-3" />
+          AI-Powered Scheduling
+        </Badge>
+      </div>
+
       {/* Filters */}
       <div className="flex gap-2">
         {(['all', 'pending', 'scheduled'] as const).map((f) => (
@@ -78,8 +146,8 @@ export function AlertsList() {
       {/* Alerts */}
       <div className="space-y-3">
         {filteredAlerts.map((alert) => {
-          const vehicle = vehicles.find((v) => v.id === alert.vehicleId);
-          const config = severityConfig[alert.severity];
+          const vehicle = vehicles.find((v) => v.id === alert.vehicle_id);
+          const config = severityConfig[alert.severity] || severityConfig.low;
           const Icon = config.icon;
 
           return (
@@ -100,15 +168,15 @@ export function AlertsList() {
                     <div>
                       <h4 className="font-semibold">{alert.component}</h4>
                       <p className="text-sm text-muted-foreground">
-                        {vehicle?.make} {vehicle?.model} ({vehicle?.year}) • VIN: {vehicle?.vin?.slice(-8)}
+                        {vehicle?.make} {vehicle?.model} ({vehicle?.year}) • VIN: {vehicle?.vin?.slice(-8) || 'N/A'}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge className={cn('capitalize', config.badge)}>
                         {alert.severity}
                       </Badge>
-                      <Badge className={cn('capitalize', statusConfig[alert.status])}>
-                        {alert.status}
+                      <Badge variant={alert.is_resolved ? 'secondary' : 'outline'}>
+                        {alert.is_resolved ? 'Resolved' : 'Pending'}
                       </Badge>
                     </div>
                   </div>
@@ -118,34 +186,64 @@ export function AlertsList() {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
                     <div className="flex items-center gap-2 text-muted-foreground">
                       <Calendar className="h-4 w-4" />
-                      <span>Predicted: {new Date(alert.predictedFailureDate).toLocaleDateString('en-IN')}</span>
+                      <span>
+                        Predicted: {alert.predicted_failure_date 
+                          ? new Date(alert.predicted_failure_date).toLocaleDateString('en-IN')
+                          : 'N/A'
+                        }
+                      </span>
                     </div>
                     <div className="flex items-center gap-2 text-muted-foreground">
                       <TrendingUp className="h-4 w-4" />
-                      <span>Confidence: {alert.confidence}%</span>
+                      <span>Confidence: {Math.round((alert.confidence_score || 0) * 100)}%</span>
                     </div>
                     <div className="flex items-center gap-2 text-muted-foreground">
                       <DollarSign className="h-4 w-4" />
-                      <span>Est. Cost: ₹{alert.estimatedCost.toLocaleString()}</span>
+                      <span>Est. Cost: ₹5,000</span>
                     </div>
+                    {vehicle && (
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <Phone className="h-4 w-4" />
+                        <span className="truncate">{vehicle.owner_phone || 'N/A'}</span>
+                      </div>
+                    )}
                   </div>
 
-                  <div className="p-3 rounded-lg bg-muted/50 mb-4">
-                    <p className="text-sm font-medium mb-1">Recommended Action:</p>
-                    <p className="text-sm text-muted-foreground">{alert.recommendedAction}</p>
-                  </div>
+                  {alert.ai_recommendation && (
+                    <div className="p-3 rounded-lg bg-muted/50 mb-4">
+                      <p className="text-sm font-medium mb-1 flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-primary" />
+                        AI Recommendation:
+                      </p>
+                      <p className="text-sm text-muted-foreground">{alert.ai_recommendation}</p>
+                    </div>
+                  )}
 
-                  {alert.status === 'pending' && (
+                  {!alert.is_resolved && (
                     <div className="flex gap-2">
-                      <Button size="sm" className="gap-2">
+                      <Button 
+                        size="sm" 
+                        className="gap-2"
+                        onClick={() => handleScheduleService(alert)}
+                      >
                         <Calendar className="h-4 w-4" />
                         Schedule Service
                       </Button>
-                      <Button size="sm" variant="outline" className="gap-2">
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        className="gap-2"
+                        onClick={() => handleContactCustomer(alert)}
+                      >
                         <Phone className="h-4 w-4" />
                         Contact Customer
                       </Button>
-                      <Button size="sm" variant="ghost" className="gap-2">
+                      <Button 
+                        size="sm" 
+                        variant="ghost" 
+                        className="gap-2"
+                        onClick={() => handleDismiss(alert)}
+                      >
                         <Check className="h-4 w-4" />
                         Dismiss
                       </Button>
@@ -157,6 +255,27 @@ export function AlertsList() {
           );
         })}
       </div>
+
+      {filteredAlerts.length === 0 && (
+        <div className="text-center py-12 text-muted-foreground">
+          <p>No alerts found.</p>
+        </div>
+      )}
+
+      {/* Modals */}
+      <ScheduleServiceModal
+        alert={selectedAlert}
+        vehicle={selectedVehicle}
+        isOpen={isScheduleOpen}
+        onClose={() => setIsScheduleOpen(false)}
+        onScheduled={() => {}}
+      />
+
+      <CustomerContactModal
+        vehicle={selectedVehicle}
+        isOpen={isContactOpen}
+        onClose={() => setIsContactOpen(false)}
+      />
     </div>
   );
 }

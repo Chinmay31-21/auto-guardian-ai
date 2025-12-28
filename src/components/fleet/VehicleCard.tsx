@@ -1,14 +1,23 @@
-import { Vehicle } from '@/data/mockData';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { Car, MapPin, Calendar, Gauge, Phone, Mail } from 'lucide-react';
+import { Car, MapPin, Calendar, Gauge, Phone } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { Tables } from '@/integrations/supabase/types';
+
+type Vehicle = Tables<'vehicles'>;
 
 interface VehicleCardProps {
   vehicle: Vehicle;
   onSelect: (vehicle: Vehicle) => void;
 }
+
+const getStatusFromHealthScore = (score: number | null) => {
+  if (!score) return 'warning';
+  if (score >= 80) return 'healthy';
+  if (score >= 50) return 'warning';
+  return 'critical';
+};
 
 const statusConfig = {
   healthy: {
@@ -26,7 +35,8 @@ const statusConfig = {
 };
 
 export function VehicleCard({ vehicle, onSelect }: VehicleCardProps) {
-  const config = statusConfig[vehicle.status];
+  const status = getStatusFromHealthScore(vehicle.health_score);
+  const config = statusConfig[status];
 
   return (
     <div className="rounded-xl border border-border bg-card p-5 shadow-sm hover:shadow-md transition-all duration-200 group">
@@ -42,16 +52,24 @@ export function VehicleCard({ vehicle, onSelect }: VehicleCardProps) {
             <p className="text-sm text-muted-foreground">{vehicle.year}</p>
           </div>
         </div>
-        <Badge className={cn('capitalize', config.color)}>{vehicle.status}</Badge>
+        <div className="flex flex-col items-end gap-1">
+          <Badge className={cn('capitalize', config.color)}>{status}</Badge>
+          {vehicle.telematics_status === 'active' && (
+            <div className="flex items-center gap-1 text-xs text-[hsl(var(--success))]">
+              <div className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--success))] animate-pulse" />
+              Live
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="space-y-3 mb-4">
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Health Score</span>
-          <span className="font-semibold">{vehicle.healthScore}%</span>
+          <span className="font-semibold">{vehicle.health_score || 0}%</span>
         </div>
         <Progress
-          value={vehicle.healthScore}
+          value={vehicle.health_score || 0}
           className="h-2"
         />
       </div>
@@ -59,34 +77,44 @@ export function VehicleCard({ vehicle, onSelect }: VehicleCardProps) {
       <div className="grid grid-cols-2 gap-3 text-sm mb-4">
         <div className="flex items-center gap-2 text-muted-foreground">
           <Gauge className="h-4 w-4" />
-          <span>{vehicle.mileage.toLocaleString()} km</span>
+          <span>{(vehicle.mileage || 0).toLocaleString()} km</span>
         </div>
         <div className="flex items-center gap-2 text-muted-foreground">
           <MapPin className="h-4 w-4" />
-          <span className="truncate">{vehicle.location.split(',')[0]}</span>
+          <span className="truncate">
+            {vehicle.location_lat && vehicle.location_lng 
+              ? `${Number(vehicle.location_lat).toFixed(2)}, ${Number(vehicle.location_lng).toFixed(2)}`
+              : 'Unknown'
+            }
+          </span>
         </div>
         <div className="flex items-center gap-2 text-muted-foreground">
           <Calendar className="h-4 w-4" />
-          <span>Next: {new Date(vehicle.nextServiceDue).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>
+          <span>
+            Next: {vehicle.next_service_date 
+              ? new Date(vehicle.next_service_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+              : 'N/A'
+            }
+          </span>
         </div>
         <div className={cn(
           'flex items-center gap-2',
-          vehicle.telematicsConnected ? 'text-[hsl(var(--success))]' : 'text-muted-foreground'
+          vehicle.telematics_status === 'active' ? 'text-[hsl(var(--success))]' : 'text-muted-foreground'
         )}>
           <div className={cn(
             'h-2 w-2 rounded-full',
-            vehicle.telematicsConnected ? 'bg-[hsl(var(--success))] animate-pulse' : 'bg-muted-foreground'
+            vehicle.telematics_status === 'active' ? 'bg-[hsl(var(--success))] animate-pulse' : 'bg-muted-foreground'
           )} />
-          <span>{vehicle.telematicsConnected ? 'Connected' : 'Offline'}</span>
+          <span>{vehicle.telematics_status === 'active' ? 'Connected' : 'Offline'}</span>
         </div>
       </div>
 
       <div className="pt-3 border-t border-border">
-        <p className="text-sm font-medium mb-2">{vehicle.ownerName}</p>
+        <p className="text-sm font-medium mb-2">{vehicle.owner_name}</p>
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
           <div className="flex items-center gap-1">
             <Phone className="h-3 w-3" />
-            <span>{vehicle.ownerPhone}</span>
+            <span>{vehicle.owner_phone || 'N/A'}</span>
           </div>
         </div>
       </div>
